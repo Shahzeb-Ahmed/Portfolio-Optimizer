@@ -1,0 +1,114 @@
+import pandas as pd
+import numpy as np
+import scipy.optimize as spo
+
+def get_data(fileName):
+    '''
+    Takes in the string name of the csv file holding stock information and returns the information as a dataframe.
+    Also accounts for incomplete data.
+    '''
+    df = pd.read_csv("{}.csv".format(fileName), index_col="Date", parse_dates=True, usecols=["Date", "Adj Close"], 
+                        na_values = ["nan"])
+    df.fillna(method = "ffill", inplace = True)
+    df.fillna(method = "bfill", inplace = True)
+    return df
+
+
+
+def sharpe(alloc, stocks, startVal=1000):
+    '''
+    Given a dictionary of stock information in numpy dataframes and allocation (%) of capital, 
+    return the following Sharpe Ratio (Daily; assuming 0 risk free returns)
+    '''
+    #First extract the prices
+    prices = pd.DataFrame()
+
+    for stock in stocks:
+        dfTemp = stocks[stock]
+        dfTemp = dfTemp.rename(columns = {"Adj Close" : stock})
+        prices = prices.join(dfTemp, how = "right")
+    
+    #Then normalize the prices
+    normed = prices/prices.iloc[0]
+    
+    #Then multiply the allocated percentage of the portfolio by the normalized prices
+    alloced = normed * alloc
+    
+    #Then we multiple the allocated percentage returns by our starting values to see how much we actually made or lost
+    dfReturns = alloced * startVal
+
+    #Now we compute sharpe ratio 
+    dailyReturns = (dfReturns.iloc[1:]/dfReturns.iloc[:-1].values) - 1
+    sharpe = np.sqrt(252)*(dailyReturns.mean(axis=0)/np.std(dailyReturns, axis=0))
+    sharpe = sharpe.fillna(0)   #A sharpe ratio of NaN comes about when nothing is allocated to the stock
+    return sharpe.mean()*-1    #Since the minimizer requires the objective function to return a single value
+
+
+def returns(alloc, stocks, startVal=1000):
+    '''
+    Takes in allocated capital, stocks in portfolio and starting value, 
+    and returns daily portifolio value and cumulative returns.
+    '''
+    #First extract the prices
+    prices = pd.DataFrame()
+
+    for stock in stocks:
+        dfTemp = stocks[stock]
+        dfTemp = dfTemp.rename(columns = {"Adj Close" : stock})
+        prices = prices.join(dfTemp, how = "right")
+    
+    #Then normalize the prices
+    normed = prices/prices.iloc[0]
+    
+    #Then multiply the allocated percentage of the portfolio by the normalized prices
+    alloced = normed * alloc
+    
+    #Then we multiple the allocated percentage returns by our starting values to see how much we actually made or lost
+    dfReturns = alloced * startVal
+    
+    #Finally, we sum up each row to get daily portfolio value
+    dailyValue = dfReturns.mean(axis=1)
+    
+    #Now we find cumulative returns
+    cumulativeReturns = (dfReturns.iloc[-1]/dfReturns.iloc[0]) - 1
+    
+    return (dailyValue, cumulativeReturns)
+    
+
+def optimize_allocations(stocks):
+    '''
+    Given a dictionary of stock information in numpy dataframes, return the optimal point that maximizes Sharpe Ratio.
+    '''
+    guessAlloc = []
+        
+    for stock in stocks:
+        guessAlloc.append(0.0000001)
+        
+    def constraint1(guessAlloc):
+        return sum(guessAlloc)-1
+    
+    con1 = {"type": "eq", "fun": constraint1}
+    con = [con1]
+#    for i in guessAlloc:
+#        con.append({"type": "ineq", "fun": i})
+    
+    result = spo.minimize(sharpe, guessAlloc, args = (stocks, ), method = "SLSQP", constraints = con)
+    return result
+
+
+
+def test_run():
+    #First we get the data we plan to use, as well as SPY as a means of checking if our optimizer is working sufficiently
+    symbols = ["GOOG", "FB", "BRK-A", "NFLX", "AMZN"]
+    
+    stocks = {}
+    for i in symbols:
+        dfTemp = get_data(i)
+        stocks[i] = dfTemp
+    
+    dfSPY = pd.read_csv("SPY.csv", index_col="Date", parse_dates=True, usecols=["Date", "Adj Close"], 
+                        na_values = ["nan"])
+    dfSPY = dfSPY.rename(columns = {"Adj Close":"SPY"})
+        
+    optimalAllocations = optimize_allocations(stocks).x
+    return returns(optimalAllocations, stocks, startVal=1000000)
