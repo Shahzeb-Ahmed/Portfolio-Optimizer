@@ -1,0 +1,449 @@
+# **The Model** 
+
+'''
+# Importing and cleaning the dataset
+'''
+import datetime
+import bs4 as bs
+import pandas_datareader as web
+import requests
+
+tickers = [
+           'AMD',   # Walmart
+           'AMZN',  # Amazon
+           'XOM',   # Exxon Mobil Corporation
+           'AAPL',  # Apple Inc
+           'CVS',   # CVS Health Corporation
+           'BRK-A', # Berkshire Hathaway Inc
+           'UNH',   # UnitedHealth Group Incorporated 
+           'MCK',   # McKesson Corporation
+           'T',     # AT&T Inc
+           'ABC',   # AmerisourceBergen Corporation
+]
+
+
+def get_data(tickers, start_date, end_date):
+  '''
+  The purpose of this function is to retrieve the relevant data given a list of
+  stocks, the start date and the end date.
+
+  tickers --> List object containing String objects of the company's tickers
+  start_date --> Datetime object indicating starting point for the analysis
+  end_date --> Datetime object indicating ending point for the analysis
+
+  Returns historical data for the inputed companies
+  '''
+  df = web.DataReader(tickers, 'yahoo', start_date, end_date)
+  df.drop(columns=['Adj Close', 'Low', 'High', 'Volume'], inplace=True)
+  return df
+
+# First, we choose the dates we are considering
+start_date = datetime.datetime(2020, 1, 24)
+end_date = datetime.datetime(2021, 1, 25)
+# Next, we load the data from Yahoo Finance
+df = get_data(tickers, start_date, end_date)
+# Lets drop the NaNs
+df.dropna(inplace=True, axis=0)
+df.head()
+
+"""# Isolation of downside deviation"""
+
+def downside_dev(data, MAR=0):
+    """ 
+    data is an array of values (return values)
+    MAR is the minimum acceptable return. It is chosen by the user.
+
+    returns downside_dev 
+    """
+    period = len(data)
+    data = np.array(data)
+    data = data * 100 # convert returns to percent
+    MAR = MAR * 100 # convert MAR to percent
+
+    # The following is the algo for calculating downside deviation
+    # 1. subtract the MAR from each of the returns
+    data = data - MAR
+
+    # 2. remove all the instances where the return is non-negative
+    data = data[data<0]
+
+    # 3. square the numbers
+    data = data**2
+
+    # 4. sum the values inside the array
+    sum = data.sum()
+
+    # 5. divide the sum by the total number of the periods being examined and calculate the square root of that number to get the 
+    # downside sd
+    ddev = np.sqrt(np.divide(sum,period))
+    return ddev/100
+
+"""Sanity check for the function above:
+The example below should output downside deviation ddev of 0.0433 for the list below and MAR = 1%.
+"""
+
+test_data = [-0.02, 0.16, 0.31, 0.17, -0.11, 0.21, 0.26, -0.03, 0.38]
+stdev = np.std(np.array(test_data))
+ddev = downside_dev(test_data, MAR=0.01)
+print(f"std: {stdev}")
+print(f"ddev: {ddev}")
+
+ddev_data=[]
+for i in daily_gains.columns:
+  print(f'Stock: {i} \tDownside Risk: {downside_dev(daily_gains[i], MAR=0.005)}')
+  ddev_data.append(downside_dev(daily_gains[i], MAR=0.005))
+
+ddev_data = np.array(ddev_data)
+ddev_data
+
+'''def std_downside(daily_gains, stock):
+  dof = 1 / (2 * (len(daily_gains) - 1))
+  lst = []
+  for i in range(len(daily_gains)):
+    lst.append(daily_gains[stock][i] - daily_gains['ZB=F'][i])
+  return np.sqrt(abs(dof * sum(lst)))
+
+std=[]
+for i in daily_gains.columns:
+  print(f'Stock: {i} \tDownside Risk: {std_downside(daily_gains, i)}')
+  std.append(std_downside(daily_gains, i))
+
+std'''
+
+"""**Sanity Check:** The downside risk for the U.S. Treasury Bond is 0. This makes sense since treasury bond rates are virtually risk-free.
+
+Now that our results make sense, lets perform an optimization operation using our definition of risk.
+"""
+
+average_return = daily_gains.mean()
+covariance = daily_gains.cov()
+
+# Estimate parameters for portfolio optimization model
+mu = average_return.values    #convert dataframe to array
+Sigma = covariance.values    #convert dataframe to matrix
+
+# let Sigma_1 be the ddev^2-covariance matrix
+Sigma_1 = Sigma.copy()
+
+i=0
+for stock in Sigma_1:
+  for entryNum in range(len(stock)):
+    if i==entryNum:
+      stock[entryNum] = ddev_data[i]**2 # squaring it makes it to have the same units as the variances in Sigma. This allows correct comparison of the lab3 model and our model.
+  i += 1
+
+Sigma_1
+
+"""Lab 3 Model"""
+
+import cvxpy as cp
+
+#variable and parameter definitions
+x0 = cp.Variable(len(mu))
+gamma = cp.Parameter(nonneg = True)
+
+#objective definition
+ret = mu.T*x0
+risk = cp.quad_form(x0, Sigma)
+obj = cp.Maximize(ret - risk)
+
+#constraint definition
+cons = []
+cons.append(cp.sum(x0) == 1)
+cons.append(x0 >= 0)
+
+#formulating the problem
+prob = cp.Problem(obj, cons)
+prob.solve()
+
+
+print(f'The allocation vector is:\n{np.round(x0.value, 3)}')
+print(f'The expected return is: {ret.value:.4}')
+print(f'The variance is: {(risk.value):.4}')
+
+"""Our model"""
+
+import cvxpy as cp
+
+#variable and parameter definitions
+x1 = cp.Variable(len(mu))
+gamma = cp.Parameter(nonneg = True)
+
+#objective definition
+ret = mu.T*x1
+risk = cp.quad_form(x1, Sigma_1)
+obj = cp.Maximize(ret - risk)
+#constraint definition
+cons = []
+cons.append(cp.sum(x1) == 1)
+cons.append(x1 >= 0)
+
+
+#formulating the problem
+prob = cp.Problem(obj, cons)
+prob.solve()
+
+
+print(f'The allocation vector is:\n{np.round(x1.value, 3)}')
+print(f'The expected return is: {ret.value:.4}')
+print(f'The variance is: {(risk.value):.4}')
+
+"""# Results
+We get a different allocation vector in our model with slightly less return but with more risk.
+
+lab3 results:
+The allocation vector is:
+[ 0.24 -0.    0.    0.76  0.    0.   -0.    0.    0.    0.    0.  ]
+The expected return is: 0.0008238
+The variance is: 4.608e-05
+
+our model results
+The allocation vector is:
+[ 0.385  0.     0.     0.615 -0.    -0.     0.    -0.    -0.    -0.
+ -0.   ]
+The expected return is: 0.0008133
+The variance is: 7.95e-05
+
+Some questions to answer:
+- why is the risk more in our model?
+
+Variance depends on the MAR.
+
+# Next steps:
+- test the allocation vector on actual prices
+- Buy stocks according to lab3 model in the beginning of 2018 and sell them near the end of 2018.
+- Buy stocks according to our model in the beginning of 2018 and sell them near the end of 2018.
+- See which model makes better prescription.
+
+# Monte Carlo Simulation
+"""
+
+import scipy.stats as stats
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as snf
+import pandas as pd
+
+"""This source says that for time scales greater than 16 days, we observe results consistent with a slow convergence to Gaussian behavior.
+
+https://www.researchgate.net/publication/228931664_The_distribution_of_returns_of_stock_prices
+
+"""
+
+import numpy as np
+
+def monte_carlo_simulate(arr = None, n=1000):
+    '''
+    arguments: arr - list of values
+                n - number of simulated values
+
+    output: returns a list of simulated daily return values
+    '''
+
+    '''
+    # test if the proposed dist is a good fit
+    # convert arr to a numpy array
+    arr = np.array(arr)
+
+    # Monte Carlo Simulation Algorithm
+
+    # Sort the array
+    sorted_arr = np.sort(arr)
+
+    # calculate empirical probability for each value in sorted array
+    emp_prob = []
+    arr_length = len(sorted_arr)
+    for value_idx in range(len(sorted_arr)):
+        emp_prob.append((value_idx+1)/arr_length)
+    emp_prob = np.array(emp_prob)
+    '''
+    # generate samples
+    random_probs = np.random.uniform(size=n)
+    # using inverse CDF of t distribution
+    mean = np.mean(arr)
+    sd = np.std(arr)
+    normal = stats.norm.ppf(random_probs, loc=mean, scale=sd) 
+
+    return normal
+
+simulated_daily_gains = []
+for i in range(len(daily_gains.columns)):
+    stock_daily_gains = monte_carlo_simulate(daily_gains[daily_gains.columns[i]], n=700)
+    simulated_daily_gains.append(stock_daily_gains)
+plt.hist(stock_daily_gains, bins=30)
+plt.title(daily_gains.columns[i])
+simulated_daily_gains = np.array(simulated_daily_gains)
+# convert to pandas dataframe
+cols = list(daily_gains.columns)
+simulated_daily_gains = pd.DataFrame(simulated_daily_gains.T)
+simulated_daily_gains.columns = cols
+simulated_daily_gains.head()
+
+_, p = stats.normaltest(stock_daily_gains)
+result = True
+if (p<0.05):
+    result = False
+print(f"p-value: {p} meaning is normal: {result}")
+
+simulated_ddev_data=[]
+for i in simulated_daily_gains.columns:
+  print(f'Stock: {i} \tDownside Risk: {downside_dev(simulated_daily_gains[i], MAR=0.01)}')
+  simulated_ddev_data.append(downside_dev(simulated_daily_gains[i], MAR=0.01))
+
+simulated_ddev_data = np.array(simulated_ddev_data)
+
+simulated_average_return = simulated_daily_gains.mean()
+simulated_covariance = simulated_daily_gains.cov()
+
+# Estimate parameters for portfolio optimization model
+mu = simulated_average_return.values    #convert dataframe to array
+Sigma = simulated_covariance.values    #convert dataframe to matrix
+
+# let Sigma_1 be the ddev^2-covariance matrix
+Sigma_1 = Sigma.copy()
+
+i=0
+for stock in Sigma_1:
+  for entryNum in range(len(stock)):
+    if i==entryNum:
+      stock[entryNum] = simulated_ddev_data[i]**2 # squaring it makes it to have the same units as the variances in Sigma. This allows correct comparison of the lab3 model and our model.
+  i += 1
+
+"""our model with the simulated data"""
+
+import cvxpy as cp
+
+#variable and parameter definitions
+x3 = cp.Variable(len(mu))
+gamma = cp.Parameter(nonneg = True)
+
+#objective definition
+ret = mu.T*x3
+risk = cp.quad_form(x3, Sigma_1)
+obj = cp.Maximize(ret - risk)
+
+#constraint definition
+cons = []
+cons.append(cp.sum(x3) == 1)
+cons.append(x3 >= 0)
+
+#formulating the problem
+prob = cp.Problem(obj, cons)
+prob.solve()
+
+
+print(f'The allocation vector is:\n{np.round(x3.value, 3)}')
+print(f'The expected return is: {ret.value:.4}')
+print(f'The variance is: {(risk.value):.4}')
+
+"""# Results:
+Our model produces approx. twice as much expected daily return with less risk
+
+lab3 results
+The allocation vector is:
+[0.086 0.095 0.1   0.098 0.095 0.078 0.092 0.098 0.091 0.081 0.087]
+The expected return is: 0.001592
+The variance is: 0.09063
+
+our model results
+The allocation vector is:
+[0.079 0.1   0.112 0.105 0.1   0.064 0.092 0.108 0.091 0.067 0.083]
+The expected return is: 0.002622
+The variance is: 0.04603
+
+we have to set np.random.seed() to get the same results. The variation is because of monte carlo simulation.
+
+# Next steps:
+- test the allocation vector on actual prices
+- Buy stocks according to lab3 model in the beginning of 2018 and sell them near the end of 2018.
+- Buy stocks according to our model in the beginning of 2018 and sell them near the end of 2018.
+- See which model makes better prescription.
+
+# Testing the models against real world unseen data
+"""
+
+def netGain(start_date, end_date, weight, p=1000):
+    '''
+    start_date and end_date format is like yyyy-mm-dd
+    weight is a list (allocation vector). The values in weight are the 
+    proportion of the principal to be invested in each stock.
+    p is the principal amount
+    '''
+    df = get_data(tickers, start_date, end_date)
+    buyVal = df.Open.loc[start_date] # stock prices at start_date
+    sellVal = df.Open.loc[end_date] # stock prices at end_date
+    num_shares_bought = []
+
+    buy_amt = [] # amt of investiment in dollars in each stock
+    sell_amt = [] # dollar amt made after selling all stock holdings
+    for i in range(len(weight)):
+        investment = p*weight[i] # amount to invest in a stock
+        stock_name = tickers[i]  # get the name of the stock
+        num_shares = investment // buyVal[stock_name]
+        num_shares_bought.append(num_shares)
+
+        buy_amt.append(buyVal[stock_name] * num_shares)
+    
+    total_investment = sum(buy_amt) # amount acctually invested out of p
+
+    # sell shares
+    for i in range(len(weight)):
+        stock_name = tickers[i]
+        stock_value = sellVal[stock_name]
+        money_made = stock_value * num_shares_bought[i]
+        sell_amt.append(money_made)
+    
+    total_gains = sum(sell_amt)
+
+    net_gain = total_gains - total_investment
+    
+    return net_gain
+
+# test lab3 model (base model)
+weights0 = list(np.round(x0.value, 3))
+start_date = "2017-09-21"
+end_date = "2018-09-21"
+p = 10000
+print(weights0)
+money_made0 = netGain(start_date, end_date, weights0, p)
+print(money_made0)
+
+# test our model with downside dev 
+weights1 = list(np.round(x1.value, 3))
+money_made1 = netGain(start_date, end_date, weights1, p)
+print(money_made1)
+
+# test lab3 model with simulation
+weights2 = list(np.round(x2.value, 3))
+money_made2 = netGain(start_date, end_date, weights2, p)
+money_made2
+
+# our model with ddev & simulation
+weights3 = list(np.round(x3.value, 3))
+money_made3 = netGain(start_date, end_date, weights3, p)
+money_made3
+
+plt.bar(x=["base", "method 1", "method 2"], height= [money_made0, money_made1, money_made3])
+plt.title("Amount of Money Generated From $10000 in 1 Year")
+plt.ylabel("AMOUNT OF RETURN IN DOLLARS")
+plt.xlabel("MODEL")
+
+plt.bar(x=["base", "method 1"], height= [money_made0, money_made1])
+plt.title("Amount of Money Generated From $10000 in 1 Year")
+plt.ylabel("AMOUNT OF RETURN IN DOLLARS")
+plt.xlabel("MODEL")
+
+plt.bar(x=["Baseline", "Primary"], height= [money_made0, money_made3])
+plt.title("Amount of Money Generated From $10000 in 1 Year")
+plt.ylabel("AMOUNT OF RETURN IN DOLLARS")
+plt.xlabel("MODEL")
+
+import seaborn as sns
+amazon = daily_gains.columns[1]
+amazon_data = daily_gains[amazon]
+amazon_sim_data = simulated_daily_gains[amazon]
+
+dist1 = sns.displot(amazon_data)
+dist1.set_axis_labels('Amazon Daily Returns', 'frequency')
+dist2 = sns.displot(amazon_sim_data)
+dist2.set_axis_labels('Simulated Amazon Daily Returns', 'frequency')
